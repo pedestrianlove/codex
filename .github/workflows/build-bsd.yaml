@@ -59,6 +59,7 @@ jobs:
             chmod +x rustup-init
             ./rustup-init -y --profile minimal --default-toolchain stable
             export PATH="$HOME/.cargo/bin:$PATH"
+            . "/home/runner/work/codex/codex/.cargo/env" 
             rustc -V && cargo -V
 
             # Build codex-rs
