@@ -1,0 +1,87 @@
+# .github/workflows/freebsd-12_4-codex-rs.yml
+name: Build codex-rs on FreeBSD 12.4
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freebsd-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache Cargo artifacts across runs (cache lives on the host; we point Cargo into the mounted workspace)
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cargo/registry
+            .cargo/git
+            target
+          key: freebsd12.4-cargo-${{ hashFiles('codex-rs/Cargo.lock') }}
+          restore-keys: |
+            freebsd12.4-cargo-
+
+      - name: Build inside FreeBSD 12.4 VM
+        id: fbsd
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "12.4"       # x86_64 supported
+          usesh: true
+          mem: 4096
+          cpu: 2
+          # Expose these to persist caches into the mounted workspace
+          envs: "CARGO_HOME CARGO_TARGET_DIR"
+          prepare: |
+            set -eux
+            pkg update -f
+            pkg install -y rust git pkgconf openssl ca_root_nss cmake
+          run: |
+            set -eux
+            echo "FreeBSD version:" && freebsd-version -u
+
+            # Use workspace-mounted cargo dirs so Actions cache can capture them
+            export CARGO_HOME="$GITHUB_WORKSPACE/.cargo"
+            export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+
+            # Build codex-rs specifically
+            cd "$GITHUB_WORKSPACE/codex-rs"
+            cargo build --locked --release
+
+            # Collect and package the CLI binary
+            cd "$GITHUB_WORKSPACE"
+            mkdir -p artifacts
+            # The CLI binary produced by codex-rs is 'codex'
+            BIN="target/release/codex"
+            test -x "$BIN"
+            cp "$BIN" "artifacts/codex-x86_64-unknown-freebsd"
+            tar -C artifacts -czf artifacts/codex-x86_64-unknown-freebsd.tar.gz codex-x86_64-unknown-freebsd
+            rm artifacts/codex-x86_64-unknown-freebsd
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create a new release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          make_latest: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: false
+          files: |
+            artifacts/codex-x86_64-unknown-freebsd.tar.gz
