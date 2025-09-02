@@ -45,27 +45,30 @@ jobs:
           envs: "CARGO_HOME CARGO_TARGET_DIR"
           prepare: |
             set -eux
-            pkg update -f
-            pkg install -y rust git pkgconf openssl ca_root_nss cmake
           run: |
             set -eux
             echo "FreeBSD version:" && freebsd-version -u
 
-            # Use workspace-mounted cargo dirs so Actions cache can capture them
+            # Use workspace-mounted cargo dirs so the outer cache works
             export CARGO_HOME="$GITHUB_WORKSPACE/.cargo"
             export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
 
-            # Build codex-rs specifically
+            # Install Rust toolchain via rustup (no pkg repositories needed)
+            cd /tmp
+            fetch https://static.rust-lang.org/rustup/dist/x86_64-unknown-freebsd/rustup-init
+            chmod +x rustup-init
+            ./rustup-init -y --profile minimal --default-toolchain stable
+            export PATH="$HOME/.cargo/bin:$PATH"
+            rustc -V && cargo -V
+
+            # Build codex-rs
             cd "$GITHUB_WORKSPACE/codex-rs"
             cargo build --locked --release
 
-            # Collect and package the CLI binary
+            # Package artifact
             cd "$GITHUB_WORKSPACE"
             mkdir -p artifacts
-            # The CLI binary produced by codex-rs is 'codex'
-            BIN="target/release/codex"
-            test -x "$BIN"
-            cp "$BIN" "artifacts/codex-x86_64-unknown-freebsd"
+            install -m755 target/release/codex artifacts/codex-x86_64-unknown-freebsd
             tar -C artifacts -czf artifacts/codex-x86_64-unknown-freebsd.tar.gz codex-x86_64-unknown-freebsd
             rm artifacts/codex-x86_64-unknown-freebsd
 
